@@ -333,3 +333,72 @@ def sources():
        "claim":"Not Airtel Money records"},"population":{"provider":"WorldPop","live_cache_endpoint":"/v1/geo/public-context"},
        "weather":{"provider":"Open-Meteo","live_cache_endpoint":"/v1/geo/public-context"},
        "roads":{"provider":"OpenStreetMap","status":"public map tiles only; no live traffic counts"}}
+
+
+def distance_m(a_lat,a_lon,b_lat,b_lon):
+    """Haversine distance in meters between geographic coordinates."""
+    earth=6371008.8
+    p1,p2=math.radians(a_lat),math.radians(b_lat)
+    dp=math.radians(b_lat-a_lat)
+    dl=math.radians(b_lon-a_lon)
+    x=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 2*earth*math.asin(min(1,math.sqrt(x)))
+
+@app.get("/v1/geo/osm-context")
+def osm_context():
+    """Cache public OSM POI proxies for commercial activity and access.
+    OSM is not actual footfall, congestion or Airtel competitor registration data.
+    """
+    with Session(engine) as db:
+        cache=db.get(ProviderCache,"osm_pois")
+        if cache:
+            checked=cache.checked_at.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc)-checked).total_seconds()<86400:
+                return json.loads(cache.payload_json)
+        bounds="(-1.42,36.62,-1.08,37.04)"
+        query=('[out:json][timeout:20];('
+               'node["amenity"~"^(bank|atm|marketplace|bus_station)$"]'+bounds+';'
+               'node["shop"~"^(supermarket|convenience|mall)$"]'+bounds+';'
+               ');out body;')
+        result={"status":"unavailable","source":"OpenStreetMap Overpass",
+                "limitations":"POI count is a coverage proxy, not measured traffic or confirmed Airtel competition."}
+        try:
+            req=urllib.request.Request(
+                "https://overpass-api.de/api/interpreter",
+                data=urllib.parse.urlencode({"data":query}).encode(),
+                headers={"Content-Type":"application/x-www-form-urlencoded",
+                         "User-Agent":"AgentPulseDemo/0.2 (research demo)"},
+                method="POST")
+            with urllib.request.urlopen(req,timeout=13) as response:
+                osm=json.load(response)
+            nodes=[n for n in osm.get("elements",[]) if "lat" in n and "lon" in n]
+            candidates=db.scalars(select(Candidate)).all()
+            counts={}
+            for c in candidates:
+                local=[n for n in nodes if distance_m(c.lat,c.lng,n["lat"],n["lon"])<=650]
+                commerce=sum(n.get("tags",{}).get("shop") is not None or
+                             n.get("tags",{}).get("amenity")=="marketplace" for n in local)
+                transport=sum(n.get("tags",{}).get("amenity")=="bus_station" for n in local)
+                finance=sum(n.get("tags",{}).get("amenity") in ("bank","atm") for n in local)
+                f=json.loads(c.features_json)
+                f["commercial"]=min(95,50+min(commerce,20)*2)
+                f["accessibility"]=min(95,50+min(transport,9)*5)
+                c.features_json=json.dumps(f)
+                counts[c.id]={"commercial_pois":commerce,"transport_pois":transport,
+                              "financial_service_pois":finance}
+            result={"status":"live_cached","source":"OpenStreetMap Overpass",
+                    "pois_count":len(nodes),"candidate_counts":counts,
+                    "attribution":"© OpenStreetMap contributors, ODbL",
+                    "limitations":"POIs are incomplete and do not measure traffic or identify mobile money franchise competition."}
+        except Exception as exc:
+            result["error_type"]=type(exc).__name__
+        result["updated_at"]=datetime.now(timezone.utc).isoformat()
+        if cache:
+            cache.payload_json=json.dumps(result)
+            cache.checked_at=datetime.now(timezone.utc)
+            cache.status=result["status"]
+        else:
+            db.add(ProviderCache(id="osm_pois",checked_at=datetime.now(timezone.utc),
+                                 status=result["status"],payload_json=json.dumps(result)))
+        db.commit()
+        return result
