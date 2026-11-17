@@ -265,8 +265,11 @@ def save_profile(req:ProfileRequest):
     normalized=check_weights(req.weights)
     profile=WeightProfile(id=str(uuid4()),label=req.label,weights_json=json.dumps(normalized),
                           created_at=datetime.now(timezone.utc))
-    with Session(engine) as db: db.add(profile);db.commit()
-    return {"id":profile.id,"label":profile.label,"weights":normalized,"persisted":True}
+    with Session(engine) as db:
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        return {"id":profile.id,"label":profile.label,"weights":normalized,"persisted":True}
 
 def http_json(url,body=None,timeout=8):
     headers={"User-Agent":"AgentPulseDemo/0.2 (educational nonprofit prototype)","Accept":"application/json"}
