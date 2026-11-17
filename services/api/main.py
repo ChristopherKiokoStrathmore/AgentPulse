@@ -405,3 +405,68 @@ def osm_context():
                                  status=result["status"],payload_json=json.dumps(result)))
         db.commit()
         return result
+
+
+@app.get("/v1/outlets/{outlet_id}/insights")
+def outlet_insights(outlet_id:str):
+    """One outlet's 36 month performance trend.
+
+    Important: monthly modelled totals are separate from sampled posted ledger
+    events. They must not be combined as if they were a complete transaction history.
+    """
+    with Session(engine) as db:
+        outlet=db.get(Outlet,outlet_id)
+        if outlet is None:
+            raise HTTPException(status_code=404,detail="Outlet not found")
+        history=db.scalars(select(Month).where(Month.outlet_id==outlet_id).order_by(Month.month.asc())).all()
+        recent=db.scalars(
+            select(Transaction).where(Transaction.outlet_id==outlet_id)
+                .order_by(Transaction.event_at.desc()).limit(60)
+        ).all()
+        monthly=[{
+            "month":m.month,
+            "transaction_count":int(m.tx_count),
+            "volume_kes":float(m.volume),
+            "average_ticket_kes":round(float(m.volume)/m.tx_count,2) if m.tx_count else 0
+        } for m in history]
+        latest=monthly[-1] if monthly else None
+        previous=monthly[-2] if len(monthly)>1 else None
+        def pct(key):
+            if not latest or not previous or not previous[key]:
+                return None
+            return round((latest[key]/previous[key]-1)*100,2)
+        recent_data=[{
+            "id":t.id,
+            "timestamp":t.event_at.isoformat(),
+            "kind":t.kind,
+            "amount_kes":float(t.amount),
+            "commission_kes":float(t.commission),
+            "status":t.status
+        } for t in recent]
+        by_kind={}
+        for t in recent:
+            if t.status=="Completed":
+                key=t.kind
+                if key not in by_kind: by_kind[key]={"count":0,"value_kes":0.0}
+                by_kind[key]["count"]+=1
+                by_kind[key]["value_kes"]+=float(t.amount)
+        return {
+            "outlet":serialize_outlet(outlet),
+            "history":monthly,
+            "period":{"first":monthly[0]["month"] if monthly else None,
+                      "last":latest["month"] if latest else None,
+                      "months":len(monthly)},
+            "summary":{
+                "total_modelled_transactions":sum(x["transaction_count"] for x in monthly),
+                "total_modelled_volume_kes":round(sum(x["volume_kes"] for x in monthly),2),
+                "latest_month":latest,
+                "transaction_growth_pct":pct("transaction_count"),
+                "volume_growth_pct":pct("volume_kes"),
+                "recent_posted_event_commission_kes":round(sum(float(x.commission) for x in recent),2),
+                "recent_posted_event_count":len(recent)
+            },
+            "recent_transactions":recent_data,
+            "sample_types":by_kind,
+            "source":"synthetic",
+            "caveat":"36 modelled monthly totals are not reconstructed from the sampled 60 posted events. Neither dataset is an actual Airtel Money transaction feed."
+        }
