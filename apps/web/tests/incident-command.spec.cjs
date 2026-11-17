@@ -87,7 +87,8 @@ test("switch map styles, maximize map, and open 36 month outlet trends",async ({
  await expect(insights.locator(".recharts-responsive-container").first()).toBeVisible();
  await insights.getByRole("button",{name:"Trends"}).click();
  await insights.getByLabel("Trend reporting window").selectOption("6 months");
- await expect(insights.getByText("6 months of modelled performance")).toHaveCount(0);
+ await expect(insights.getByLabel("Trend reporting window")).toHaveValue("6 months");
+ await expect(insights).toContainText("36 months of modelled performance");
  await expect(insights.getByText("Transaction performance")).toBeVisible();
  await insights.getByRole("button",{name:"Transactions"}).click();
  await expect(insights.getByText("SIM-001")).toBeVisible();
