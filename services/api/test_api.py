@@ -39,3 +39,24 @@ def test_site_weights_and_persistence():
         profiles=client.get("/v1/geo/weight-profiles")
         assert profiles.status_code==200
         assert any(p["id"]==created.json()["id"] for p in profiles.json()["data"])
+
+
+def test_outlet_performance_36_month_history_and_missing_outlet():
+    with TestClient(app) as client:
+        response=client.get("/v1/outlets/AP-001/insights")
+        assert response.status_code==200
+        data=response.json()
+        assert data["source"]=="synthetic"
+        assert data["period"]=={"first":"2023-11","last":"2026-10","months":36}
+        assert len(data["history"])==36
+        assert all(m["transaction_count"]>0 and m["volume_kes"]>=0 for m in data["history"])
+        assert data["summary"]["total_modelled_transactions"]==sum(
+            month["transaction_count"] for month in data["history"]
+        )
+        assert data["summary"]["total_modelled_volume_kes"]==round(sum(
+            month["volume_kes"] for month in data["history"]
+        ),2)
+        assert 0<len(data["recent_transactions"])<=60
+        assert all(event["id"].startswith("SIM-001") for event in data["recent_transactions"])
+        assert "not reconstructed from" in data["caveat"]
+        assert client.get("/v1/outlets/DOES-NOT-EXIST/insights").status_code==404
