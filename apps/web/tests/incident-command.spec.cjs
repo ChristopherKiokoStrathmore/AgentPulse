@@ -76,7 +76,9 @@ test("switch map styles, maximize map, and open 36 month outlet trends",async ({
  await dialog.locator(".ap-incident-list-item").first().click();
  const insights=dialog.getByRole("region",{name:/Outlet performance dashboard/i});
  await expect(insights).toBeVisible();
- await expect(insights.getByText("36 months of modelled performance")).toBeVisible();
+ await page.waitForTimeout(2500);
+ console.log("OUTLET_INSIGHTS_DIAG:",JSON.stringify((await insights.innerText()).slice(0,2400)));
+ await expect(insights.getByText("36 months of modelled performance")).toBeVisible({timeout:10000});
  await expect(insights.getByText("Transaction performance")).toBeVisible();
  await expect(insights.locator(".recharts-responsive-container").first()).toBeVisible();
  await insights.getByRole("button",{name:"Trends"}).click();
