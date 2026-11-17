@@ -115,6 +115,7 @@ def seed():
     with Session(engine) as db:
         if db.scalar(select(func.count()).select_from(Outlet))>0: return
         rng=random.Random(20261117)
+        pending_ledger=[]
         for i,(name,area,lat,lng) in enumerate(OUTLET_POINTS):
             oid=f"AP-{i+1:03d}"
             cash=Decimal(rng.randrange(190000,390000,100))
@@ -136,8 +137,8 @@ def seed():
                 date=datetime(2026,10,31,18,tzinfo=timezone.utc)-timedelta(hours=j*11+i)
                 db.add(Transaction(id=tid,outlet_id=oid,event_at=date,kind=kind,
                     amount=amount,commission=fee,status="Completed"))
-                db.add(Ledger(transaction_id=tid,outlet_id=oid,account="CASH",delta=change_cash))
-                db.add(Ledger(transaction_id=tid,outlet_id=oid,account="EFLOAT",delta=change_float))
+                pending_ledger.append(Ledger(transaction_id=tid,outlet_id=oid,account="CASH",delta=change_cash))
+                pending_ledger.append(Ledger(transaction_id=tid,outlet_id=oid,account="EFLOAT",delta=change_float))
             state="Critical" if min(cash,efloat)<135000 else "Watch" if min(cash,efloat)<205000 else "Healthy"
             monthly_tx=rng.randint(1900,5100)
             db.add(Outlet(id=oid,name=name,area=area,lat=lat,lng=lng,cash=cash,efloat=efloat,
@@ -154,6 +155,8 @@ def seed():
             feats={key:r.randint(48,92) for key in FACTORS}
             db.add(Candidate(id=f"SITE-{i+1}",name=name,area=area,lat=lat,lng=lng,rent=rent,
                              startup=225000+i*17000,features_json=json.dumps(feats)))
+        db.flush()  # Persist parent outlets and transactions before ledger child rows.
+        db.add_all(pending_ledger)
         db.commit()
 
 @asynccontextmanager
@@ -270,6 +273,7 @@ def http_json(url,body=None,timeout=8):
 @app.get("/v1/geo/public-context")
 def public_context(refresh:bool=False):
     """Cached public data. No claim that simulated financial scores are measured data."""
+    if refresh: raise HTTPException(403,"External refresh is controlled by cache expiry")
     with Session(engine) as db:
         cached=db.get(ProviderCache,"public_context")
         if cached and not refresh and (datetime.now(timezone.utc)-cached.checked_at.replace(tzinfo=timezone.utc)).total_seconds()<86400:
