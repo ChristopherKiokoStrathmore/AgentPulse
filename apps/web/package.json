@@ -16,6 +16,7 @@
     "react-dom": "^19.1.0",
     "lucide-react": "^0.468.0",
     "animejs": "^4.5.0",
-    "recharts": "^2.15.4"
+    "recharts": "^2.15.4",
+    "maplibre-gl": "^5.0.0"
   }
 }
