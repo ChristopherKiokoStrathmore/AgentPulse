@@ -1,11 +1,18 @@
 "use client";
 
 import {useEffect,useMemo,useRef,useState} from "react";
-import {Activity,AlertTriangle,ArrowRight,ArrowUpRight,CheckCircle2,ChevronLeft,ChevronRight,Compass,ExternalLink,LocateFixed,MapPinned,Maximize2,Navigation,Radio,ScanLine,ShieldAlert,Wallet,WalletCards,X} from "lucide-react";
+import {Activity,AlertTriangle,ArrowRight,ArrowUpRight,CheckCircle2,ChevronLeft,ChevronRight,Compass,ExternalLink,Layers3,LocateFixed,MapPinned,Maximize2,Minimize2,Navigation,Radio,ScanLine,ShieldAlert,Wallet,WalletCards,X} from "lucide-react";
+import OutletInsights from "./OutletInsights";
 
 const MONEY=n=>"KES "+Math.round(Number(n||0)).toLocaleString("en-KE");
 const HOT_RED="#ff4763",HOT_AMBER="#ffbe65",HOT_GREEN="#30d8a5";
-const mapTheme="https://tiles.openfreemap.org/styles/dark";
+// Official OpenFreeMap public styles; terrain uses openly hosted Mapterhorn DEM tiles.
+const MAP_STYLES={
+ Streets:"https://tiles.openfreemap.org/styles/bright",
+ Light:"https://tiles.openfreemap.org/styles/positron",
+ Terrain:"https://tiles.openfreemap.org/styles/liberty",
+ Dark:"https://tiles.openfreemap.org/styles/dark"
+};
 
 function detailFor(outlet){
  if(!outlet)return {title:"Select an outlet",description:"Select a point on the map to investigate its balances.",severity:"Watch",reasons:[]};
@@ -100,27 +107,30 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
  const [current,setCurrent]=useState(initialOutlet||risks[0]||outlets[0]||null);
  const [camera,setCamera]=useState("street");
  const [filter,setFilter]=useState("All");
- const [styleMode,setStyleMode]=useState("Dark");
+ const [styleMode,setStyleMode]=useState("Streets");
+ const [isExpanded,setIsExpanded]=useState(false);
+ const [insightsOpen,setInsightsOpen]=useState(false);
  const [mapError,setMapError]=useState(false);
  const mapEl=useRef(null);
  const mapRef=useRef(null);
  const markersRef=useRef([]);
  const currentRef=useRef(current);
  const initialRef=useRef(current);
- const selectRef=useRef(setCurrent);
- selectRef.current=setCurrent;
+ const styleModeRef=useRef("Streets");
+ const selectRef=useRef(null);
+ selectRef.current=o=>{setCurrent(o);setInsightsOpen(true);};
  currentRef.current=current;
  const viewing=detailFor(current);
  const visible=risks.filter(o=>filter==="All"||o.status===filter);
  const currentIndex=risks.findIndex(o=>o.id===current?.id);
  const lat=Number(current?.lat),lng=Number(current?.lng);
  useEffect(()=>{
-  const key=e=>{if(e.key==="Escape")onClose();};
+  const key=e=>{if(e.key==="Escape"){if(insightsOpen){setInsightsOpen(false);}else if(isExpanded){setIsExpanded(false);}else{onClose();}}};
   document.addEventListener("keydown",key);
   const original=document.body.style.overflow;
   document.body.style.overflow="hidden";
   return ()=>{document.removeEventListener("keydown",key);document.body.style.overflow=original;};
- },[onClose]);
+ },[onClose,insightsOpen,isExpanded]);
  useEffect(()=>{
   let disposed=false;
   let mapInstance=null;
@@ -131,7 +141,7 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
     const first=initialRef.current;
     mapInstance=new maplibregl.Map({
      container:mapEl.current,
-     style:mapTheme,
+     style:MAP_STYLES.Streets,
      center:[Number(first.lng),Number(first.lat)],
      zoom:15.6,
      pitch:62,
@@ -142,9 +152,19 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
     mapRef.current=mapInstance;
     mapInstance.addControl(new maplibregl.NavigationControl({visualizePitch:true}),"top-right");
     mapInstance.addControl(new maplibregl.AttributionControl({compact:true}),"bottom-right");
-    mapInstance.on("load",()=>{
+    mapInstance.on("style.load",()=>{
      setMapError(false);
      if(disposed)return;
+
+     if(styleModeRef.current==="Terrain"){
+      try{
+       if(!mapInstance.getSource("ap-elevation")){
+        mapInstance.addSource("ap-elevation",{type:"raster-dem",url:"https://tiles.mapterhorn.com/tilejson.json",tileSize:256,encoding:"terrarium"});
+        mapInstance.setTerrain({source:"ap-elevation",exaggeration:1.25});
+        mapInstance.addLayer({id:"ap-hillshade",type:"hillshade",source:"ap-elevation",paint:{"hillshade-exaggeration":0.48,"hillshade-shadow-color":"#637b6e","hillshade-highlight-color":"#fbf0cc"}});
+       }
+      }catch(e){/* Keep roads visible if terrain DEM cannot load. */}
+     }
      // The basemap may not carry building height attribution everywhere.
      try{
       const layers=mapInstance.getStyle().layers||[];
@@ -191,6 +211,17 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
   };
  },[outlets]);
  useEffect(()=>{
+  styleModeRef.current=styleMode;
+  if(mapRef.current){
+   try{mapRef.current.setStyle(MAP_STYLES[styleMode],{diff:false});setMapError(false);}catch(e){setMapError(true);}
+  }
+ },[styleMode]);
+ useEffect(()=>{
+  const handle=requestAnimationFrame(()=>{mapRef.current?.resize();});
+  const later=setTimeout(()=>mapRef.current?.resize(),350);
+  return ()=>{cancelAnimationFrame(handle);clearTimeout(later);};
+ },[isExpanded,insightsOpen]);
+ useEffect(()=>{
   if(!current||!mapRef.current)return;
   const index=outlets.findIndex(o=>o.id===current.id);
   markersRef.current.forEach((m,i)=>m.getElement().classList.toggle("selected",i===index));
@@ -205,7 +236,7 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
  const next=()=>{if(!risks.length)return;setCurrent(risks[(Math.max(0,currentIndex)+1)%risks.length]);};
  const prev=()=>{if(!risks.length)return;setCurrent(risks[(Math.max(0,currentIndex)+risks.length-1)%risks.length]);};
  return <div className="ap-incident-backdrop" role="dialog" aria-modal="true" aria-label="Liquidity incident command map">
-  <div className="ap-incident-window">
+  <div className={"ap-incident-window "+(isExpanded?"ap-map-maximized":"")}>
    <div className="ap-incident-top">
     <div className="ap-incident-heading"><span className="ap-command-logo"><Activity size={19}/></span><div><b>LIQUIDITY COMMAND</b><small>Investigate flagged Nairobi outlets</small></div></div>
     <div className="ap-incident-actions">
@@ -222,7 +253,7 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
      <div className="ap-incident-list">
       {visible.map(o=>{
        const d=detailFor(o);
-       return <button key={o.id} type="button" onClick={()=>setCurrent(o)} className={"ap-incident-list-item "+(current?.id===o.id?"selected":"")}>
+       return <button key={o.id} type="button" onClick={()=>selectRef.current(o)} className={"ap-incident-list-item "+(current?.id===o.id?"selected":"")}>
         <span className={"ap-incident-list-flag "+(o.status==="Critical"?"red":"amber")}>{o.status==="Critical"?<ShieldAlert size={15}/>:<AlertTriangle size={15}/>}</span>
         <span className="ap-incident-list-content"><b>{o.name}</b><small>{d.title}</small><em>{o.area} · {o.status}</em></span>
         <ChevronRight size={16}/>
@@ -234,9 +265,13 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
     <div className="ap-incident-map">
      <div className="ap-incident-map-base" ref={mapEl}/>
      {mapError&&<div className="ap-incident-fallback"><MapPinned size={32}/><h3>Map tiles unavailable</h3><p>Use the external maps link to inspect this approximate location.</p>{current&&<a target="_blank" rel="noopener noreferrer" href={mapsUrl(current)}>Open location map <ExternalLink size={15}/></a>}</div>}
-     <div className="ap-incident-map-top"><span className="ap-incident-map-tag"><span/> 3D STREET MAP</span><div className="ap-incident-map-switch">{["street","network"].map(v=><button type="button" key={v} onClick={()=>setCamera(v)} className={camera===v?"active":""}>{v==="street"?"Street level":"Network"}</button>)}</div></div>
+     <div className="ap-incident-map-top"><span className="ap-incident-map-tag"><span/> INTERACTIVE NAIROBI MAP</span><div className="ap-incident-map-controls">
+      <label className="ap-incident-map-style"><Layers3 size={14}/><select aria-label="Map style" value={styleMode} onChange={e=>setStyleMode(e.target.value)}>{Object.keys(MAP_STYLES).map(v=><option key={v}>{v}</option>)}</select></label>
+      <div className="ap-incident-map-switch">{["street","network"].map(v=><button type="button" key={v} onClick={()=>setCamera(v)} className={camera===v?"active":""}>{v==="street"?"Street level":"Network"}</button>)}</div>
+      <button className="ap-incident-expand" type="button" onClick={()=>setIsExpanded(v=>!v)} title={isExpanded?"Return to investigation layout":"Expand the map to full screen"} aria-label={isExpanded?"Exit full screen map":"Expand map to full screen"}>{isExpanded?<Minimize2 size={16}/>:<Maximize2 size={16}/>}<span>{isExpanded?"Exit full screen":"Full screen"}</span></button>
+     </div></div>
      <div className="ap-incident-crosshair"><LocateFixed size={21}/></div>
-     <div className="ap-incident-map-bottom"><span><i className="critical"/> Critical</span><span><i className="watch"/> Watch</span><span><i className="healthy"/> Healthy</span><span className="ap-map-attribution">© OpenStreetMap contributors / OpenFreeMap</span></div>
+     <div className="ap-incident-map-bottom"><span><i className="critical"/> Critical</span><span><i className="watch"/> Watch</span><span><i className="healthy"/> Healthy</span><span className="ap-map-attribution">© OpenStreetMap contributors / OpenFreeMap{styleMode==="Terrain"?" / © Mapterhorn":""}</span></div>
     </div>
     <aside className="ap-incident-inspection">
      {current&&<>
@@ -246,13 +281,14 @@ export function IncidentExplorer({outlets=[],initialOutlet,onClose}){
        <div className="ap-inspection-issue"><div className="ap-inspection-issue-head"><AlertTriangle size={16}/> WHY IT WAS FLAGGED</div><h3>{viewing.title}</h3><p>{viewing.description}</p></div>
        <div className="ap-inspection-balances"><div><span><Wallet size={14}/> Cash reserve</span><strong>{MONEY(current.cash)}</strong></div><div><span><WalletCards size={14}/> Electronic float</span><strong>{MONEY(current.float)}</strong></div></div>
        {viewing.reasons.map(r=><div className="ap-inspection-reason" key={r.type}><div><b>{r.type}</b><strong>Below threshold by {MONEY(r.gap)}</strong></div><p>{r.message}</p></div>)}
-       <div className="ap-inspection-actions"><a href={streetUrl(current)} target="_blank" rel="noopener noreferrer" className="ap-inspection-street"><Navigation size={17}/> Open Google Street View <ExternalLink size={14}/></a><a href={mapsUrl(current)} target="_blank" rel="noopener noreferrer" className="ap-inspection-maplink"><MapPinned size={15}/> Open Google Maps</a></div>
+       <div className="ap-inspection-actions"><button type="button" className="ap-inspection-dashboard" onClick={()=>setInsightsOpen(true)}><Activity size={17}/> View outlet dashboard and trends <ArrowRight size={14}/></button><a href={streetUrl(current)} target="_blank" rel="noopener noreferrer" className="ap-inspection-street"><Navigation size={17}/> Open Google Street View <ExternalLink size={14}/></a><a href={mapsUrl(current)} target="_blank" rel="noopener noreferrer" className="ap-inspection-maplink"><MapPinned size={15}/> Open Google Maps</a></div>
        <p className="ap-incident-caveat">Street View opens Google Maps externally. Nearby imagery may be unavailable or not show the outlet. An exact storefront requires verified coordinates and consent.</p>
       </div>
      </>}
      <div className="ap-inspection-footer"><button onClick={prev} aria-label="Previous flagged outlet"><ChevronLeft size={18}/></button><span>{currentIndex>=0?currentIndex+1:"—"} of {risks.length} flagged</span><button onClick={next} aria-label="Next flagged outlet"><ChevronRight size={18}/></button></div>
     </aside>
    </div>
+   {insightsOpen&&current&&<OutletInsights outlet={current} apiBase={process.env.NEXT_PUBLIC_API_URL} onClose={()=>setInsightsOpen(false)}/>}
   </div>
  </div>;
 }
