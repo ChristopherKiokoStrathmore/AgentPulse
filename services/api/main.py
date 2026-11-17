@@ -116,6 +116,8 @@ def seed():
         if db.scalar(select(func.count()).select_from(Outlet))>0: return
         rng=random.Random(20261117)
         pending_ledger=[]
+        pending_transactions=[]
+        pending_months=[]
         for i,(name,area,lat,lng) in enumerate(OUTLET_POINTS):
             oid=f"AP-{i+1:03d}"
             cash=Decimal(rng.randrange(190000,390000,100))
@@ -135,7 +137,7 @@ def seed():
                 fee_sum+=fee
                 completed+=1
                 date=datetime(2026,10,31,18,tzinfo=timezone.utc)-timedelta(hours=j*11+i)
-                db.add(Transaction(id=tid,outlet_id=oid,event_at=date,kind=kind,
+                pending_transactions.append(Transaction(id=tid,outlet_id=oid,event_at=date,kind=kind,
                     amount=amount,commission=fee,status="Completed"))
                 pending_ledger.append(Ledger(transaction_id=tid,outlet_id=oid,account="CASH",delta=change_cash))
                 pending_ledger.append(Ledger(transaction_id=tid,outlet_id=oid,account="EFLOAT",delta=change_float))
@@ -148,14 +150,17 @@ def seed():
                 month=(k+10)%12+1
                 seasonal=1.17 if month==12 else 1.08 if month in (1,8) else 1
                 count=int((1200+k*51+i*38)*seasonal*rng.uniform(.85,1.15))
-                db.add(Month(outlet_id=oid,month=f"{year}-{month:02d}",tx_count=count,
+                pending_months.append(Month(outlet_id=oid,month=f"{year}-{month:02d}",tx_count=count,
                             volume=Decimal(count*rng.randint(1300,2400))))
         for i,(name,area,lat,lng,rent) in enumerate(CANDIDATE_POINTS):
             r=random.Random(9000+i)
             feats={key:r.randint(48,92) for key in FACTORS}
             db.add(Candidate(id=f"SITE-{i+1}",name=name,area=area,lat=lat,lng=lng,rent=rent,
                              startup=225000+i*17000,features_json=json.dumps(feats)))
-        db.flush()  # Persist parent outlets and transactions before ledger child rows.
+        db.flush()  # First persist all parent outlets and candidates.
+        db.add_all(pending_transactions)
+        db.add_all(pending_months)
+        db.flush()  # Then persist transactions and summaries before ledger rows.
         db.add_all(pending_ledger)
         db.commit()
 
