@@ -32,6 +32,12 @@ test("all overview risk hotspot buttons open the incident drawer",async ({page})
 
 
 test("switch map styles, maximize map, and open 36 month outlet trends",async ({page})=>{
+ test.setTimeout(90000);
+ await page.route("https://tiles.openfreemap.org/styles/**",route=>{
+  if(route.request().url().includes("sprite")||route.request().url().includes("glyph"))return route.abort();
+  return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({version:8,name:"Deterministic test style",sources:{},layers:[{id:"base",type:"background",paint:{"background-color":"#edf4f7"}}]})});
+ });
+ await page.route("https://tiles.mapterhorn.com/**",route=>route.abort());
  const history=Array.from({length:36},(_,i)=>{
   const month=new Date(Date.UTC(2023,10+i,1)).toISOString().slice(0,7);
   const count=1000+i*19;
@@ -76,9 +82,7 @@ test("switch map styles, maximize map, and open 36 month outlet trends",async ({
  await dialog.locator(".ap-incident-list-item").first().click();
  const insights=dialog.getByRole("region",{name:/Outlet performance dashboard/i});
  await expect(insights).toBeVisible();
- await page.waitForTimeout(2500);
- console.log("OUTLET_INSIGHTS_DIAG:",JSON.stringify((await insights.innerText()).slice(0,2400)));
- await expect(insights.getByText("36 months of modelled performance")).toBeVisible({timeout:10000});
+ await expect(insights).toContainText("36 months of modelled performance",{timeout:20000});
  await expect(insights.getByText("Transaction performance")).toBeVisible();
  await expect(insights.locator(".recharts-responsive-container").first()).toBeVisible();
  await insights.getByRole("button",{name:"Trends"}).click();
